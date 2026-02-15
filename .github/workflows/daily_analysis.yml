@@ -3,7 +3,7 @@ name: Trading AI Daily Run
 on:
   schedule:
     # 每天北京时间早上 9:00 运行 (对应 UTC 01:00)
-    - cron: '0 1 * * *'
+    - cron: '30 11 * * *'
   workflow_dispatch: # 允许你手动点击按钮随时运行
 
 jobs:
