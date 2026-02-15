@@ -1,0 +1,39 @@
+name: Trading AI Daily Run
+
+on:
+  schedule:
+    # 每天北京时间早上 9:00 运行 (对应 UTC 01:00)
+    - cron: '0 1 * * *'
+  workflow_dispatch: # 允许你手动点击按钮随时运行
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install Dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install langchain-openai langchain-community langgraph httpx
+
+    - name: Run Analysis Script
+      env:
+        # 将 GitHub Secrets 映射给 Python 环境
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        AV_KEYS: ${{ secrets.AV_KEYS }}
+      run: python run_automation.py
+
+    - name: Upload Analysis Reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: Stock-Reports-${{ github.run_id }}
+        path: reports/
+        retention-days: 7 # 报告在 GitHub 保留 7 天
