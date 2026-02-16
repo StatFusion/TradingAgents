@@ -4,7 +4,7 @@ on:
   schedule:
     # 每天美东时间 06:30 运行 (对应 UTC 11:30)
     - cron: '30 11 * * *'
-  workflow_dispatch: # 允许你在网页上随时手动运行
+  workflow_dispatch: # 允许你在网页上随时点按钮手动运行
 
 jobs:
   analyze:
@@ -26,6 +26,7 @@ jobs:
 
     - name: Run Analysis Script
       env:
+        # 将 GitHub Secrets 映射给 Python 环境
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         AV_KEYS: ${{ secrets.AV_KEYS }}
       run: python run_automation.py
