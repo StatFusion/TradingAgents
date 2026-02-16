@@ -4,7 +4,7 @@ on:
   schedule:
     # 每天美东时间 06:30 运行 (对应 UTC 11:30)
     - cron: '30 11 * * *'
-  workflow_dispatch: # 允许你在网页上随时点按钮手动运行
+  workflow_dispatch: # 允许你在网页上随时手动运行
 
 jobs:
   analyze:
@@ -12,10 +12,10 @@ jobs:
     
     steps:
     - name: Checkout Code
-      uses: actions/checkout@v4 # 最新版本
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v5 # 最新版本
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
@@ -26,14 +26,13 @@ jobs:
 
     - name: Run Analysis Script
       env:
-        # 将你在 GitHub Settings -> Secrets 中存好的密文拿出来
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         AV_KEYS: ${{ secrets.AV_KEYS }}
       run: python run_automation.py
 
     - name: Upload Analysis Reports
-      uses: actions/upload-artifact@v4 # 最新版本，极速上传
+      uses: actions/upload-artifact@v4
       with:
         name: Stock-Reports-${{ github.run_id }}
         path: reports/
-        retention-days: 7 # 报告为你保留 7 天
+        retention-days: 7
