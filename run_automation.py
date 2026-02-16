@@ -1,134 +1,117 @@
 import os
-import sys
-import subprocess
-import argparse
+import httpx
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ==============================================================================
-# 1. 子进程任务（负责干活：完全独立的环境和 API Key）
+# 1. 从 GitHub Secrets 动态加载密钥
 # ==============================================================================
-def worker_main(stock):
-    # 猴子补丁在这里打，确保每个进程独立拦截 GLM
-    import openai
-    original_init = openai.OpenAI.__init__
-    def patched_init(self, *args, **kwargs):
-        kwargs["base_url"] = "https://api.z.ai/api/coding/paas/v4"
-        # 从老板进程传下来的环境变量中读取 Key
-        kwargs["api_key"] = os.environ.get("OPENAI_API_KEY")
-        if "http_client" in kwargs: del kwargs["http_client"]
-        original_init(self, *args, **kwargs)
-    
-    openai.OpenAI.__init__ = patched_init
-    openai.AsyncOpenAI.__init__ = patched_init
+openai_key = os.getenv("OPENAI_API_KEY", "")
+os.environ["OPENAI_API_KEY"] = openai_key
 
-    from tradingagents.graph.trading_graph import TradingAgentsGraph
-    from tradingagents.default_config import DEFAULT_CONFIG
+av_keys_raw = os.getenv("AV_KEYS", "")
+alpha_vantage_keys = [k.strip() for k in av_keys_raw.split(",") if k.strip()]
 
-    config = DEFAULT_CONFIG.copy()
-    config["llm_provider"] = "openai"        
-    config["deep_think_llm"] = "glm-5" 
-    config["quick_think_llm"] = "glm-5"
-    config["max_debate_rounds"] = 2
+if not alpha_vantage_keys or not openai_key:
+    print("❌ 致命错误: 未能在环境变量中找到必要的 API Keys。请检查 GitHub Secrets。")
+    exit(1)
 
-    # 以下内容会被操作系统强制“录音”并写入文件
-    print(f"🚀 [AI Agent 启动] 正在深度分析: {stock}")
-    print(f"🔑 当前分配数据 Key: {os.environ.get('ALPHA_VANTAGE_API_KEY', '')[:4]}****")
-    print("="*60)
-    
-    # 必须是 debug=True 才能生成深度研报
-    ta = TradingAgentsGraph(debug=True, config=config)
-    _, decision = ta.propagate(stock, "2026-02-15")
-    
-    print("\n" + "="*60)
-    print(f"📊 【{stock}】最终交易决策总结")
-    print("="*60)
-    print(decision)
+# 2. 导入 OpenAI 的官方库
+import openai
 
+# 3. 核心猴子补丁：直接拦截 OpenAI Client 的初始化行为
+original_init = openai.AsyncOpenAI.__init__
+
+def patched_init(self, *args, **kwargs):
+    kwargs["base_url"] = "https://api.z.ai/api/coding/paas/v4"
+    kwargs["api_key"] = openai_key
+    if "http_client" in kwargs:
+        del kwargs["http_client"]
+    original_init(self, *args, **kwargs)
+
+openai.AsyncOpenAI.__init__ = patched_init
+
+original_sync_init = openai.OpenAI.__init__
+def patched_sync_init(self, *args, **kwargs):
+    kwargs["base_url"] = "https://api.z.ai/api/coding/paas/v4"
+    kwargs["api_key"] = openai_key
+    if "http_client" in kwargs:
+        del kwargs["http_client"]
+    original_sync_init(self, *args, **kwargs)
+
+openai.OpenAI.__init__ = patched_sync_init
 
 # ==============================================================================
-# 2. 主进程调度函数（负责分配工作并收集报告）
+# 补丁打完后，正常导入框架
 # ==============================================================================
-def master_task(stock, api_key, reports_dir):
-    # 将 Key 和无缓冲设置写入独立的系统环境变量
-    env = os.environ.copy()
-    env["ALPHA_VANTAGE_API_KEY"] = api_key
-    env["PYTHONUNBUFFERED"] = "1" 
-    
-    file_path = os.path.join(reports_dir, f"{stock}_analysis.txt")
-    
-    # 召唤隐形的子终端
-    cmd = [sys.executable, os.path.abspath(__file__), "--worker", stock]
-    
-    try:
-        # 强制把所有标准输出和框架底层日志吸走
-        result = subprocess.run(cmd, env=env, capture_output=True, text=True, check=True)
+from tradingagents.graph.trading_graph import TradingAgentsGraph
+from tradingagents.default_config import DEFAULT_CONFIG
+
+config = DEFAULT_CONFIG.copy()
+config["llm_provider"] = "openai"        
+config["deep_think_llm"] = "glm-5" 
+config["quick_think_llm"] = "glm-5"
+config["max_debate_rounds"] = 2 
+
+# 创建专属文件夹
+reports_dir = "reports"
+if not os.path.exists(reports_dir):
+    os.makedirs(reports_dir)
+
+stock_list = ["CHRW", "RTX", "NOW", "TSM", "SHLD", "QQQM", "RSP", "VXUS", "VTI"] 
+
+# 增加一个线程锁，专门用来防止 API Key 被其他线程覆盖
+init_lock = threading.Lock()
+
+# ==============================================================================
+# 核心执行函数
+# ==============================================================================
+def process_stock(stock, current_key):
+    # 使用锁来确保：修改环境变量 -> 初始化 Agent 这一步是安全的
+    with init_lock:
+        os.environ["ALPHA_VANTAGE_API_KEY"] = current_key
+        print(f"\n=============================================")
+        print(f"🔍 正在启动分析: {stock} ... (当前使用数据 Key: {current_key[:4]}****)")
+        print(f"=============================================")
         
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(result.stdout)
-            if result.stderr:
-                f.write("\n\n--- ⚠️ 底层框架调试信息 (STDERR) ---\n")
-                f.write(result.stderr)
-                
-        return f"✅ 【{stock}】分析完成，全量思考过程已存入: {file_path}"
-    
-    except subprocess.CalledProcessError as e:
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write("⚠️ 程序运行崩溃，以下是崩溃前的截获日志：\n")
-            f.write(e.stdout)
-            f.write("\n\n--- ❌ 崩溃详细报错 (STDERR) ---\n")
-            f.write(e.stderr)
-        return f"❌ 【{stock}】分析失败 (详细报错已存入 txt 文件)"
+        # ⚠️ 必须在锁内初始化！这样它才会读到刚刚换上的新 Key
+        ta = TradingAgentsGraph(debug=True, config=config)
 
+    try:
+        # 框架会自动跑当前股票 (这一步最耗时，放在锁外面并发执行)
+        _, decision = ta.propagate(stock, "2026-02-15")
+        
+        print(f"\n📊 【{stock}】分析完成！")
+        
+        # 将最终的 decision 保存为 txt 文件
+        file_path = os.path.join(reports_dir, f"{stock}_analysis.txt")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(f"目标股票: {stock}\n")
+            f.write(f"分析日期: 2026-02-15\n")
+            f.write("="*50 + "\n\n")
+            f.write(str(decision))
+            
+        return f"✅ 【{stock}】报告已成功保存至: {file_path}"
+        
+    except Exception as e:
+        return f"❌ 【{stock}】分析失败，错误信息: {e}"
 
 # ==============================================================================
-# 3. 脚本入口 (老板模式与打工人模式分流)
+# 核心更改：用 ThreadPoolExecutor 替换 for loop
 # ==============================================================================
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--worker", type=str, help="子进程专属参数")
-    args, _ = parser.parse_known_args()
-
-    if args.worker:
-        worker_main(args.worker)
-        sys.exit(0)
-
-    # ==========================================================================
-    # 4. 老板模式：发号施令 (从 GitHub Secrets 读取配置)
-    # ==========================================================================
-    reports_dir = "reports"
-    if not os.path.exists(reports_dir): os.makedirs(reports_dir)
-    
-    # 安全读取 GitHub 注入的环境变量
-    openai_key = os.getenv("OPENAI_API_KEY", "")
-    if not openai_key:
-        print("❌ 致命错误: 未能在环境变量中找到 OPENAI_API_KEY")
-        sys.exit(1)
-
-    av_keys_raw = os.getenv("AV_KEYS", "")
-    alpha_vantage_keys = [k.strip() for k in av_keys_raw.split(",") if k.strip()]
-    
-    if not alpha_vantage_keys:
-        print("❌ 致命错误: 未能在环境变量中找到 AV_KEYS")
-        sys.exit(1)
-
-    # 你的持仓与观察池
-    stock_list = ["RTX", "NOW", "TSM", "SHLD", "QQQM", "RSP", "VXUS", "VTI"] 
-
-    print(f"🔥 终极子进程并发模式启动 (物理级防串线, 并发数: 3)...")
+    print(f"🚀 开始批量运行测试并启用 API Key 自动轮询机制 (并发数: 3)...")
     print(f"✅ 成功加载 {len(alpha_vantage_keys)} 个 Alpha Vantage API Keys")
-    print(f"⚠️ 系统正在强制截获底层框架日志，过程将直接写入 txt，终端只显示进度。\n")
     
     with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {
-            executor.submit(
-                master_task, 
-                stock, 
-                alpha_vantage_keys[i % len(alpha_vantage_keys)], 
-                reports_dir
-            ): stock for i, stock in enumerate(stock_list)
-        }
-        
+        # 提交所有的股票任务
+        futures = []
+        for i, stock in enumerate(stock_list):
+            key = alpha_vantage_keys[i % len(alpha_vantage_keys)]
+            futures.append(executor.submit(process_stock, stock, key))
+            
+        # 等待并打印结果
         for future in as_completed(futures):
             print(future.result())
-
-    print("\n🎉 所有任务已结束！云端研报生成完毕。")
+            
+    print("\n🎉 所有股票分析任务已全部结束！请去 reports 文件夹查看报告。")
