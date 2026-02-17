@@ -51,14 +51,14 @@ config = DEFAULT_CONFIG.copy()
 config["llm_provider"] = "openai"        
 config["deep_think_llm"] = "glm-5" 
 config["quick_think_llm"] = "glm-5"
-config["max_debate_rounds"] = 2 
+config["max_debate_rounds"] = 3
 
 # 创建专属文件夹
 reports_dir = "reports"
 if not os.path.exists(reports_dir):
     os.makedirs(reports_dir)
 
-stock_list = ["CFLT", "CYBR", "MOD", "VEEV", "NTNX", "SYNA", "ESS"]
+stock_list = ["KWEB"]
 
 # 增加一个线程锁，专门用来防止初始化时 API Key 被覆盖
 init_lock = threading.Lock()
