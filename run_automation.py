@@ -1,3 +1,4 @@
+from datetime import datetime
 import os
 import httpx
 import threading
@@ -9,11 +10,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 openai_key = os.getenv("OPENAI_API_KEY", "")
 os.environ["OPENAI_API_KEY"] = openai_key
 
+# 【新增】动态加载 Brave Search API Key 并注入环境变量
+brave_key = os.getenv("BRAVE_API_KEY", "")
+os.environ["BRAVE_API_KEY"] = brave_key
+
 av_keys_raw = os.getenv("AV_KEYS", "")
 alpha_vantage_keys = [k.strip() for k in av_keys_raw.split(",") if k.strip()]
 
-if not alpha_vantage_keys or not openai_key:
-    print("❌ 致命错误: 未能在环境变量中找到必要的 API Keys。请检查 GitHub Secrets 配置。")
+# 【修改】安全检查：确保三种 Key 都有配置
+if not alpha_vantage_keys or not openai_key or not brave_key:
+    print("❌ 致命错误: 未能在环境变量中找到必要的 API Keys (OpenAI, AV, 或 BRAVE)。请检查 GitHub Secrets 配置。")
     exit(1)
 
 # 2. 导入 OpenAI 的官方库
@@ -51,14 +57,14 @@ config = DEFAULT_CONFIG.copy()
 config["llm_provider"] = "openai"        
 config["deep_think_llm"] = "glm-5" 
 config["quick_think_llm"] = "glm-5"
-config["max_debate_rounds"] = 3
+config["max_debate_rounds"] = 2
 
 # 创建专属文件夹
 reports_dir = "reports"
 if not os.path.exists(reports_dir):
     os.makedirs(reports_dir)
 
-stock_list = ["AVGO","DELL","CIFR","RKLB","USMV","DBMF","GLD","CLS"]
+stock_list = ["COST","PWR","NOW","TSM","VST","VTI","SLV","RTX"]
 
 # 增加一个线程锁，专门用来防止初始化时 API Key 被覆盖
 init_lock = threading.Lock()
@@ -67,6 +73,9 @@ init_lock = threading.Lock()
 # 核心执行函数：提取 State 并完美保存
 # ==============================================================================
 def process_stock(stock, current_key):
+    # 自动获取今天日期，格式为 YYYY-MM-DD
+    today_str = datetime.today().strftime('%Y-%m-%d')
+    
     # 使用锁来确保：修改环境变量 -> 初始化 Agent 这一步是安全的
     with init_lock:
         os.environ["ALPHA_VANTAGE_API_KEY"] = current_key
@@ -79,7 +88,7 @@ def process_stock(stock, current_key):
 
     try:
         # 接收返回的 state（包含了所有历史对话记录）
-        final_state, decision = ta.propagate(stock, "2026-02-15")
+        final_state, decision = ta.propagate(stock, today_str)
         
         print(f"\n📊 【{stock}】分析完成！正在保存全量对话报告...")
         
@@ -87,7 +96,7 @@ def process_stock(stock, current_key):
         file_path = os.path.join(reports_dir, f"{stock}_analysis.txt")
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(f"目标股票: {stock}\n")
-            f.write(f"分析日期: 2026-02-15\n")
+            f.write(f"分析日期: {today_str}\n")
             f.write("="*50 + "\n\n")
             
             f.write("【AI 投研团队推演与深度分析全记录】\n")
@@ -96,7 +105,7 @@ def process_stock(stock, current_key):
             # --- 核心修改：针对 TradingAgents 的底层结构进行精准提取 ---
             if isinstance(final_state, dict):
                 # 状态数据可能被日期键包裹，剥开它
-                state_data = final_state.get("2026-02-15", final_state)
+                state_data = final_state.get(today_str, final_state)
                 
                 # 1. 提取各个专业分析师的报告
                 reports = {
