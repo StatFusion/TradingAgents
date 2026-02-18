@@ -29,6 +29,7 @@ jobs:
         # 将 GitHub Secrets 映射给 Python 环境
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         AV_KEYS: ${{ secrets.AV_KEYS }}
+        BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
       run: python run_automation.py
 
     - name: Upload Analysis Reports
