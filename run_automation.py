@@ -64,7 +64,7 @@ reports_dir = "reports"
 if not os.path.exists(reports_dir):
     os.makedirs(reports_dir)
 
-stock_list = ["AMZN","MA","V","VTI","TSM","NOW","COST","VST","RTX"]
+stock_list = ["AMZN","MA","V","VTI","TSM","NOW","NVDA","MSFT","AMD"]
 
 # 增加一个线程锁，专门用来防止初始化时 API Key 被覆盖
 init_lock = threading.Lock()
